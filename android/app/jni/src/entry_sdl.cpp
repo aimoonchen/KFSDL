@@ -16,12 +16,12 @@
 #endif
 
 #include <bx/os.h>
-
-#include <SDL.h>
+#	define SDL_MAIN_HANDLED
+#include <SDL2/SDL.h>
 
 BX_PRAGMA_DIAGNOSTIC_PUSH()
 BX_PRAGMA_DIAGNOSTIC_IGNORED_CLANG("-Wextern-c-compat")
-#include <SDL_syswm.h>
+#include <SDL2/SDL_syswm.h>
 BX_PRAGMA_DIAGNOSTIC_POP()
 
 #include <bgfx/platform.h>
@@ -41,13 +41,16 @@ namespace entry
 	///
 	static void* sdlNativeWindowHandle(SDL_Window* _window)
 	{
+#if BX_PLATFORM_EMSCRIPTEN
+		static const char* canvas = "#canvas";
+		return (void*)canvas;
+#else
 		SDL_SysWMinfo wmi;
 		SDL_VERSION(&wmi.version);
 		if (!SDL_GetWindowWMInfo(_window, &wmi) )
 		{
 			return NULL;
 		}
-
 #	if BX_PLATFORM_LINUX || BX_PLATFORM_BSD
 #		if ENTRY_CONFIG_USE_WAYLAND
 		wl_egl_window *win_impl = (wl_egl_window*)SDL_GetWindowData(_window, "wl_egl_window");
@@ -72,17 +75,20 @@ namespace entry
 #   elif BX_PLATFORM_ANDROID
 		return wmi.info.android.window;
 #	endif // BX_PLATFORM_
+#endif
 	}
 
 	inline bool sdlSetWindow(SDL_Window* _window)
 	{
+#if BX_PLATFORM_EMSCRIPTEN
+#else
 		SDL_SysWMinfo wmi;
 		SDL_VERSION(&wmi.version);
 		if (!SDL_GetWindowWMInfo(_window, &wmi) )
 		{
 			return false;
 		}
-
+#endif
 		bgfx::PlatformData pd;
 #	if BX_PLATFORM_LINUX || BX_PLATFORM_BSD
 #		if ENTRY_CONFIG_USE_WAYLAND
@@ -298,7 +304,8 @@ namespace entry
 //		SDL_Haptic*         m_haptic;
 		SDL_JoystickID      m_jid;
 	};
-
+#if BX_PLATFORM_EMSCRIPTEN
+#else
 	struct MainThreadEntry
 	{
 		int m_argc;
@@ -306,7 +313,7 @@ namespace entry
 
 		static int32_t threadFunc(bx::Thread* _thread, void* _userData);
 	};
-
+#endif
 	struct Msg
 	{
 		Msg()
@@ -487,11 +494,458 @@ namespace entry
 			initTranslateGamepadAxis(SDL_CONTROLLER_AXIS_TRIGGERRIGHT, GamepadAxis::RightZ);
 		}
 
+		void handleSDLEvent()
+		{
+			auto getCopyEvent = [](const SDL_Event& event) {
+				auto size = sizeof(SDL_Event);
+				auto newEvent = BX_ALLOC(getAllocator(), size);
+				memcpy(newEvent, &event, size);
+				return newEvent;
+			};
+
+			WindowHandle defaultWindow = { 0 };
+			bool exit = false;
+			SDL_Event event;
+			while (SDL_PollEvent(&event) )
+			{
+				m_eventQueue.postRawEvent(defaultWindow, getCopyEvent(event));
+				switch (event.type)
+				{
+				case SDL_QUIT:
+					m_eventQueue.postExitEvent();
+					exit = true;
+					break;
+/*
+				case SDL_MOUSEMOTION:
+					{
+						const SDL_MouseMotionEvent& mev = event.motion;
+						m_mx = mev.x;
+						m_my = mev.y;
+
+						WindowHandle handle = findHandle(mev.windowID);
+						if (isValid(handle) )
+						{
+							m_eventQueue.postMouseEvent(handle, m_mx, m_my, m_mz);
+						}
+					}
+					break;
+
+				case SDL_MOUSEBUTTONDOWN:
+				case SDL_MOUSEBUTTONUP:
+					{
+						printf("SDL_MOUSEBUTTONDOWN/SDL_MOUSEBUTTONUP\n");
+						const SDL_MouseButtonEvent& mev = event.button;
+						WindowHandle handle = findHandle(mev.windowID);
+						if (isValid(handle) )
+						{
+							MouseButton::Enum button;
+							switch (mev.button)
+							{
+							default:
+							case SDL_BUTTON_LEFT:   button = MouseButton::Left;   break;
+							case SDL_BUTTON_MIDDLE: button = MouseButton::Middle; break;
+							case SDL_BUTTON_RIGHT:  button = MouseButton::Right;  break;
+							}
+
+							m_eventQueue.postMouseEvent(handle
+								, mev.x
+								, mev.y
+								, m_mz
+								, button
+								, mev.type == SDL_MOUSEBUTTONDOWN
+								);
+						}
+					}
+					break;
+
+				case SDL_MOUSEWHEEL:
+					{
+						const SDL_MouseWheelEvent& mev = event.wheel;
+						m_mz += mev.y;
+
+						WindowHandle handle = findHandle(mev.windowID);
+						if (isValid(handle) )
+						{
+							m_eventQueue.postMouseEvent(handle, m_mx, m_my, m_mz);
+						}
+					}
+					break;
+
+				case SDL_TEXTINPUT:
+					{
+						const SDL_TextInputEvent& tev = event.text;
+						WindowHandle handle = findHandle(tev.windowID);
+						if (isValid(handle) )
+						{
+							m_eventQueue.postCharEvent(handle, 1, (const uint8_t*)tev.text);
+						}
+					}
+					break;
+
+				case SDL_KEYDOWN:
+					{
+						const SDL_KeyboardEvent& kev = event.key;
+						WindowHandle handle = findHandle(kev.windowID);
+						if (isValid(handle) )
+						{
+							uint8_t modifiers = translateKeyModifiers(kev.keysym.mod);
+							Key::Enum key = translateKey(kev.keysym.scancode);
+
+#if 0
+							DBG("SDL scancode %d, key %d, name %s, key name %s"
+								, kev.keysym.scancode
+								, key
+								, SDL_GetScancodeName(kev.keysym.scancode)
+								, SDL_GetKeyName(kev.keysym.scancode)
+								);
+#endif // 0
+
+							/// If you only press (e.g.) 'shift' and nothing else, then key == 'shift', modifier == 0.
+							/// Further along, pressing 'shift' + 'ctrl' would be: key == 'shift', modifier == 'ctrl.
+							if (0 == key && 0 == modifiers)
+							{
+								modifiers = translateKeyModifierPress(kev.keysym.scancode);
+							}
+
+							if (Key::Esc == key)
+							{
+								uint8_t pressedChar[4];
+								pressedChar[0] = 0x1b;
+								m_eventQueue.postCharEvent(handle, 1, pressedChar);
+							}
+							else if (Key::Return == key)
+							{
+								uint8_t pressedChar[4];
+								pressedChar[0] = 0x0d;
+								m_eventQueue.postCharEvent(handle, 1, pressedChar);
+							}
+							else if (Key::Backspace == key)
+							{
+								uint8_t pressedChar[4];
+								pressedChar[0] = 0x08;
+								m_eventQueue.postCharEvent(handle, 1, pressedChar);
+							}
+
+							m_eventQueue.postKeyEvent(handle, key, modifiers, kev.state == SDL_PRESSED);
+						}
+					}
+					break;
+
+				case SDL_KEYUP:
+					{
+						const SDL_KeyboardEvent& kev = event.key;
+						WindowHandle handle = findHandle(kev.windowID);
+						if (isValid(handle) )
+						{
+							uint8_t modifiers = translateKeyModifiers(kev.keysym.mod);
+							Key::Enum key = translateKey(kev.keysym.scancode);
+							m_eventQueue.postKeyEvent(handle, key, modifiers, kev.state == SDL_PRESSED);
+						}
+					}
+					break;
+*/
+				case SDL_WINDOWEVENT:
+					{
+						const SDL_WindowEvent& wev = event.window;
+						switch (wev.event)
+						{
+						case SDL_WINDOWEVENT_RESIZED:
+						case SDL_WINDOWEVENT_SIZE_CHANGED:
+							{
+								WindowHandle handle = findHandle(wev.windowID);
+								setWindowSize(handle, wev.data1, wev.data2);
+							}
+							break;
+
+						case SDL_WINDOWEVENT_SHOWN:
+						case SDL_WINDOWEVENT_HIDDEN:
+						case SDL_WINDOWEVENT_EXPOSED:
+						case SDL_WINDOWEVENT_MOVED:
+						case SDL_WINDOWEVENT_MINIMIZED:
+						case SDL_WINDOWEVENT_MAXIMIZED:
+						case SDL_WINDOWEVENT_RESTORED:
+						case SDL_WINDOWEVENT_ENTER:
+						case SDL_WINDOWEVENT_LEAVE:
+						case SDL_WINDOWEVENT_FOCUS_GAINED:
+						case SDL_WINDOWEVENT_FOCUS_LOST:
+							break;
+
+						case SDL_WINDOWEVENT_CLOSE:
+							{
+								WindowHandle handle = findHandle(wev.windowID);
+								if (0 == handle.idx)
+								{
+									m_eventQueue.postExitEvent();
+									exit = true;
+								}
+							}
+							break;
+						}
+					}
+					break;
+/*
+				case SDL_JOYAXISMOTION:
+					{
+						const SDL_JoyAxisEvent& jev = event.jaxis;
+						GamepadHandle handle = findGamepad(jev.which);
+						if (isValid(handle) )
+						{
+							GamepadAxis::Enum axis = translateGamepadAxis(jev.axis);
+							m_gamepad[handle.idx].update(m_eventQueue, defaultWindow, handle, axis, jev.value);
+						}
+					}
+					break;
+
+				case SDL_CONTROLLERAXISMOTION:
+					{
+						const SDL_ControllerAxisEvent& aev = event.caxis;
+						GamepadHandle handle = findGamepad(aev.which);
+						if (isValid(handle) )
+						{
+							GamepadAxis::Enum axis = translateGamepadAxis(aev.axis);
+							m_gamepad[handle.idx].update(m_eventQueue, defaultWindow, handle, axis, aev.value);
+						}
+					}
+					break;
+
+				case SDL_JOYBUTTONDOWN:
+				case SDL_JOYBUTTONUP:
+					{
+						const SDL_JoyButtonEvent& bev = event.jbutton;
+						GamepadHandle handle = findGamepad(bev.which);
+
+						if (isValid(handle) )
+						{
+							Key::Enum key = translateGamepad(bev.button);
+							if (Key::Count != key)
+							{
+								m_eventQueue.postKeyEvent(defaultWindow, key, 0, event.type == SDL_JOYBUTTONDOWN);
+							}
+						}
+					}
+					break;
+
+				case SDL_CONTROLLERBUTTONDOWN:
+				case SDL_CONTROLLERBUTTONUP:
+					{
+						const SDL_ControllerButtonEvent& bev = event.cbutton;
+						GamepadHandle handle = findGamepad(bev.which);
+						if (isValid(handle) )
+						{
+							Key::Enum key = translateGamepad(bev.button);
+							if (Key::Count != key)
+							{
+								m_eventQueue.postKeyEvent(defaultWindow, key, 0, event.type == SDL_CONTROLLERBUTTONDOWN);
+							}
+						}
+					}
+					break;
+
+				case SDL_JOYDEVICEADDED:
+					{
+						GamepadHandle handle = { m_gamepadAlloc.alloc() };
+						if (isValid(handle) )
+						{
+							const SDL_JoyDeviceEvent& jev = event.jdevice;
+							m_gamepad[handle.idx].create(jev);
+							m_eventQueue.postGamepadEvent(defaultWindow, handle, true);
+						}
+					}
+					break;
+
+				case SDL_JOYDEVICEREMOVED:
+					{
+						const SDL_JoyDeviceEvent& jev = event.jdevice;
+						GamepadHandle handle = findGamepad(jev.which);
+						if (isValid(handle) )
+						{
+							m_gamepad[handle.idx].destroy();
+							m_gamepadAlloc.free(handle.idx);
+							m_eventQueue.postGamepadEvent(defaultWindow, handle, false);
+						}
+					}
+					break;
+
+				case SDL_CONTROLLERDEVICEADDED:
+					{
+						GamepadHandle handle = { m_gamepadAlloc.alloc() };
+						if (isValid(handle) )
+						{
+							const SDL_ControllerDeviceEvent& cev = event.cdevice;
+							m_gamepad[handle.idx].create(cev);
+							m_eventQueue.postGamepadEvent(defaultWindow, handle, true);
+						}
+					}
+					break;
+
+				case SDL_CONTROLLERDEVICEREMAPPED:
+					{
+
+					}
+					break;
+
+				case SDL_CONTROLLERDEVICEREMOVED:
+					{
+						const SDL_ControllerDeviceEvent& cev = event.cdevice;
+						GamepadHandle handle = findGamepad(cev.which);
+						if (isValid(handle) )
+						{
+							m_gamepad[handle.idx].destroy();
+							m_gamepadAlloc.free(handle.idx);
+							m_eventQueue.postGamepadEvent(defaultWindow, handle, false);
+						}
+					}
+					break;
+
+				case SDL_DROPFILE:
+					{
+						const SDL_DropEvent& dev = event.drop;
+						WindowHandle handle = defaultWindow; //findHandle(dev.windowID);
+						if (isValid(handle) )
+						{
+							m_eventQueue.postDropFileEvent(handle, dev.file);
+							SDL_free(dev.file);
+						}
+					}
+					break;
+*/
+				default:
+					{
+						const SDL_UserEvent& uev = event.user;
+						switch (uev.type - s_userEventStart)
+						{
+						case SDL_USER_WINDOW_CREATE:
+							{
+								WindowHandle handle = getWindowHandle(uev);
+								Msg* msg = (Msg*)uev.data2;
+
+								m_window[handle.idx] = SDL_CreateWindow(msg->m_title.c_str()
+									, msg->m_x
+									, msg->m_y
+									, msg->m_width
+									, msg->m_height
+									, SDL_WINDOW_SHOWN
+									| SDL_WINDOW_RESIZABLE
+									);
+
+								m_flags[handle.idx] = msg->m_flags;
+
+								void* nwh = sdlNativeWindowHandle(m_window[handle.idx]);
+								if (NULL != nwh)
+								{
+									m_eventQueue.postSizeEvent(handle, msg->m_width, msg->m_height);
+									m_eventQueue.postWindowEvent(handle, nwh);
+								}
+
+								delete msg;
+							}
+							break;
+
+						case SDL_USER_WINDOW_DESTROY:
+							{
+								WindowHandle handle = getWindowHandle(uev);
+								if (isValid(handle) )
+								{
+									m_eventQueue.postWindowEvent(handle);
+									sdlDestroyWindow(m_window[handle.idx]);
+									m_window[handle.idx] = NULL;
+								}
+							}
+							break;
+
+						case SDL_USER_WINDOW_SET_TITLE:
+							{
+								WindowHandle handle = getWindowHandle(uev);
+								Msg* msg = (Msg*)uev.data2;
+								if (isValid(handle) )
+								{
+									SDL_SetWindowTitle(m_window[handle.idx], msg->m_title.c_str() );
+								}
+								delete msg;
+							}
+							break;
+
+						case SDL_USER_WINDOW_SET_FLAGS:
+							{
+								WindowHandle handle = getWindowHandle(uev);
+								Msg* msg = (Msg*)uev.data2;
+
+								if (msg->m_flagsEnabled)
+								{
+									m_flags[handle.idx] |= msg->m_flags;
+								}
+								else
+								{
+									m_flags[handle.idx] &= ~msg->m_flags;
+								}
+
+								delete msg;
+							}
+							break;
+
+						case SDL_USER_WINDOW_SET_POS:
+							{
+								WindowHandle handle = getWindowHandle(uev);
+								Msg* msg = (Msg*)uev.data2;
+								SDL_SetWindowPosition(m_window[handle.idx], msg->m_x, msg->m_y);
+								delete msg;
+							}
+							break;
+
+						case SDL_USER_WINDOW_SET_SIZE:
+							{
+								WindowHandle handle = getWindowHandle(uev);
+								Msg* msg = (Msg*)uev.data2;
+								if (isValid(handle) )
+								{
+									setWindowSize(handle, msg->m_width, msg->m_height);
+								}
+								delete msg;
+							}
+							break;
+
+						case SDL_USER_WINDOW_TOGGLE_FRAME:
+							{
+								WindowHandle handle = getWindowHandle(uev);
+								if (isValid(handle) )
+								{
+									m_flags[handle.idx] ^= ENTRY_WINDOW_FLAG_FRAME;
+									SDL_SetWindowBordered(m_window[handle.idx], (SDL_bool)!!(m_flags[handle.idx] & ENTRY_WINDOW_FLAG_FRAME) );
+								}
+							}
+							break;
+
+						case SDL_USER_WINDOW_TOGGLE_FULL_SCREEN:
+							{
+								WindowHandle handle = getWindowHandle(uev);
+								m_fullscreen = !m_fullscreen;
+								SDL_SetWindowFullscreen(m_window[handle.idx], m_fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
+							}
+							break;
+
+						case SDL_USER_WINDOW_MOUSE_LOCK:
+							{
+								SDL_SetRelativeMouseMode(!!uev.code ? SDL_TRUE : SDL_FALSE);
+							}
+							break;
+
+						default:
+							break;
+						}
+					}
+					break;
+				}
+			}
+		}
+
 		int run(int _argc, char** _argv)
 		{
+#if BX_PLATFORM_EMSCRIPTEN
+#else
 			m_mte.m_argc = _argc;
 			m_mte.m_argv = _argv;
-            SDL_SetHint(SDL_HINT_VIDEO_EXTERNAL_CONTEXT, "1");
+#endif
+			SDL_SetMainReady();
 			SDL_Init(0
 				| SDL_INIT_GAMECONTROLLER
 				);
@@ -514,6 +968,9 @@ namespace entry
 			s_userEventStart = SDL_RegisterEvents(7);
 
 			sdlSetWindow(m_window[0]);
+#if BX_PLATFORM_EMSCRIPTEN
+			return main(_argc, _argv);
+#else
 			bgfx::renderFrame();
 
 			m_thread.init(MainThreadEntry::threadFunc, &m_mte);
@@ -548,439 +1005,10 @@ namespace entry
 			}
 
 			bool exit = false;
-			SDL_Event event;
 			while (!exit)
 			{
 				bgfx::renderFrame();
-
-				while (SDL_PollEvent(&event) )
-				{
-					switch (event.type)
-					{
-					case SDL_QUIT:
-						m_eventQueue.postExitEvent();
-						exit = true;
-						break;
-
-					case SDL_MOUSEMOTION:
-						{
-							const SDL_MouseMotionEvent& mev = event.motion;
-							m_mx = mev.x;
-							m_my = mev.y;
-
-							WindowHandle handle = findHandle(mev.windowID);
-							if (isValid(handle) )
-							{
-								m_eventQueue.postMouseEvent(handle, m_mx, m_my, m_mz);
-							}
-						}
-						break;
-
-					case SDL_MOUSEBUTTONDOWN:
-					case SDL_MOUSEBUTTONUP:
-						{
-							const SDL_MouseButtonEvent& mev = event.button;
-							WindowHandle handle = findHandle(mev.windowID);
-							if (isValid(handle) )
-							{
-								MouseButton::Enum button;
-								switch (mev.button)
-								{
-								default:
-								case SDL_BUTTON_LEFT:   button = MouseButton::Left;   break;
-								case SDL_BUTTON_MIDDLE: button = MouseButton::Middle; break;
-								case SDL_BUTTON_RIGHT:  button = MouseButton::Right;  break;
-								}
-
-								m_eventQueue.postMouseEvent(handle
-									, mev.x
-									, mev.y
-									, m_mz
-									, button
-									, mev.type == SDL_MOUSEBUTTONDOWN
-									);
-							}
-						}
-						break;
-
-					case SDL_MOUSEWHEEL:
-						{
-							const SDL_MouseWheelEvent& mev = event.wheel;
-							m_mz += mev.y;
-
-							WindowHandle handle = findHandle(mev.windowID);
-							if (isValid(handle) )
-							{
-								m_eventQueue.postMouseEvent(handle, m_mx, m_my, m_mz);
-							}
-						}
-						break;
-
-					case SDL_TEXTINPUT:
-						{
-							const SDL_TextInputEvent& tev = event.text;
-							WindowHandle handle = findHandle(tev.windowID);
-							if (isValid(handle) )
-							{
-								m_eventQueue.postCharEvent(handle, 1, (const uint8_t*)tev.text);
-							}
-						}
-						break;
-
-					case SDL_KEYDOWN:
-						{
-							const SDL_KeyboardEvent& kev = event.key;
-							WindowHandle handle = findHandle(kev.windowID);
-							if (isValid(handle) )
-							{
-								uint8_t modifiers = translateKeyModifiers(kev.keysym.mod);
-								Key::Enum key = translateKey(kev.keysym.scancode);
-
-#if 0
-								DBG("SDL scancode %d, key %d, name %s, key name %s"
-									, kev.keysym.scancode
-									, key
-									, SDL_GetScancodeName(kev.keysym.scancode)
-									, SDL_GetKeyName(kev.keysym.scancode)
-									);
-#endif // 0
-
-								/// If you only press (e.g.) 'shift' and nothing else, then key == 'shift', modifier == 0.
-								/// Further along, pressing 'shift' + 'ctrl' would be: key == 'shift', modifier == 'ctrl.
-								if (0 == key && 0 == modifiers)
-								{
-									modifiers = translateKeyModifierPress(kev.keysym.scancode);
-								}
-
-								if (Key::Esc == key)
-								{
-									uint8_t pressedChar[4];
-									pressedChar[0] = 0x1b;
-									m_eventQueue.postCharEvent(handle, 1, pressedChar);
-								}
-								else if (Key::Return == key)
-								{
-									uint8_t pressedChar[4];
-									pressedChar[0] = 0x0d;
-									m_eventQueue.postCharEvent(handle, 1, pressedChar);
-								}
-								else if (Key::Backspace == key)
-								{
-									uint8_t pressedChar[4];
-									pressedChar[0] = 0x08;
-									m_eventQueue.postCharEvent(handle, 1, pressedChar);
-								}
-
-								m_eventQueue.postKeyEvent(handle, key, modifiers, kev.state == SDL_PRESSED);
-							}
-						}
-						break;
-
-					case SDL_KEYUP:
-						{
-							const SDL_KeyboardEvent& kev = event.key;
-							WindowHandle handle = findHandle(kev.windowID);
-							if (isValid(handle) )
-							{
-								uint8_t modifiers = translateKeyModifiers(kev.keysym.mod);
-								Key::Enum key = translateKey(kev.keysym.scancode);
-								m_eventQueue.postKeyEvent(handle, key, modifiers, kev.state == SDL_PRESSED);
-							}
-						}
-						break;
-
-					case SDL_WINDOWEVENT:
-						{
-							const SDL_WindowEvent& wev = event.window;
-							switch (wev.event)
-							{
-							case SDL_WINDOWEVENT_RESIZED:
-							case SDL_WINDOWEVENT_SIZE_CHANGED:
-								{
-									WindowHandle handle = findHandle(wev.windowID);
-									setWindowSize(handle, wev.data1, wev.data2);
-								}
-								break;
-
-							case SDL_WINDOWEVENT_SHOWN:
-							case SDL_WINDOWEVENT_HIDDEN:
-							case SDL_WINDOWEVENT_EXPOSED:
-							case SDL_WINDOWEVENT_MOVED:
-							case SDL_WINDOWEVENT_MINIMIZED:
-							case SDL_WINDOWEVENT_MAXIMIZED:
-							case SDL_WINDOWEVENT_RESTORED:
-							case SDL_WINDOWEVENT_ENTER:
-							case SDL_WINDOWEVENT_LEAVE:
-							case SDL_WINDOWEVENT_FOCUS_GAINED:
-							case SDL_WINDOWEVENT_FOCUS_LOST:
-								break;
-
-							case SDL_WINDOWEVENT_CLOSE:
-								{
-									WindowHandle handle = findHandle(wev.windowID);
-									if (0 == handle.idx)
-									{
-										m_eventQueue.postExitEvent();
-										exit = true;
-									}
-								}
-								break;
-							}
-						}
-						break;
-
-					case SDL_JOYAXISMOTION:
-						{
-							const SDL_JoyAxisEvent& jev = event.jaxis;
-							GamepadHandle handle = findGamepad(jev.which);
-							if (isValid(handle) )
-							{
-								GamepadAxis::Enum axis = translateGamepadAxis(jev.axis);
-								m_gamepad[handle.idx].update(m_eventQueue, defaultWindow, handle, axis, jev.value);
-							}
-						}
-						break;
-
-					case SDL_CONTROLLERAXISMOTION:
-						{
-							const SDL_ControllerAxisEvent& aev = event.caxis;
-							GamepadHandle handle = findGamepad(aev.which);
-							if (isValid(handle) )
-							{
-								GamepadAxis::Enum axis = translateGamepadAxis(aev.axis);
-								m_gamepad[handle.idx].update(m_eventQueue, defaultWindow, handle, axis, aev.value);
-							}
-						}
-						break;
-
-					case SDL_JOYBUTTONDOWN:
-					case SDL_JOYBUTTONUP:
-						{
-							const SDL_JoyButtonEvent& bev = event.jbutton;
-							GamepadHandle handle = findGamepad(bev.which);
-
-							if (isValid(handle) )
-							{
-								Key::Enum key = translateGamepad(bev.button);
-								if (Key::Count != key)
-								{
-									m_eventQueue.postKeyEvent(defaultWindow, key, 0, event.type == SDL_JOYBUTTONDOWN);
-								}
-							}
-						}
-						break;
-
-					case SDL_CONTROLLERBUTTONDOWN:
-					case SDL_CONTROLLERBUTTONUP:
-						{
-							const SDL_ControllerButtonEvent& bev = event.cbutton;
-							GamepadHandle handle = findGamepad(bev.which);
-							if (isValid(handle) )
-							{
-								Key::Enum key = translateGamepad(bev.button);
-								if (Key::Count != key)
-								{
-									m_eventQueue.postKeyEvent(defaultWindow, key, 0, event.type == SDL_CONTROLLERBUTTONDOWN);
-								}
-							}
-						}
-						break;
-
-					case SDL_JOYDEVICEADDED:
-						{
-							GamepadHandle handle = { m_gamepadAlloc.alloc() };
-							if (isValid(handle) )
-							{
-								const SDL_JoyDeviceEvent& jev = event.jdevice;
-								m_gamepad[handle.idx].create(jev);
-								m_eventQueue.postGamepadEvent(defaultWindow, handle, true);
-							}
-						}
-						break;
-
-					case SDL_JOYDEVICEREMOVED:
-						{
-							const SDL_JoyDeviceEvent& jev = event.jdevice;
-							GamepadHandle handle = findGamepad(jev.which);
-							if (isValid(handle) )
-							{
-								m_gamepad[handle.idx].destroy();
-								m_gamepadAlloc.free(handle.idx);
-								m_eventQueue.postGamepadEvent(defaultWindow, handle, false);
-							}
-						}
-						break;
-
-					case SDL_CONTROLLERDEVICEADDED:
-						{
-							GamepadHandle handle = { m_gamepadAlloc.alloc() };
-							if (isValid(handle) )
-							{
-								const SDL_ControllerDeviceEvent& cev = event.cdevice;
-								m_gamepad[handle.idx].create(cev);
-								m_eventQueue.postGamepadEvent(defaultWindow, handle, true);
-							}
-						}
-						break;
-
-					case SDL_CONTROLLERDEVICEREMAPPED:
-						{
-
-						}
-						break;
-
-					case SDL_CONTROLLERDEVICEREMOVED:
-						{
-							const SDL_ControllerDeviceEvent& cev = event.cdevice;
-							GamepadHandle handle = findGamepad(cev.which);
-							if (isValid(handle) )
-							{
-								m_gamepad[handle.idx].destroy();
-								m_gamepadAlloc.free(handle.idx);
-								m_eventQueue.postGamepadEvent(defaultWindow, handle, false);
-							}
-						}
-						break;
-
-					case SDL_DROPFILE:
-						{
-							const SDL_DropEvent& dev = event.drop;
-							WindowHandle handle = defaultWindow; //findHandle(dev.windowID);
-							if (isValid(handle) )
-							{
-								m_eventQueue.postDropFileEvent(handle, dev.file);
-								SDL_free(dev.file);
-							}
-						}
-						break;
-
-					default:
-						{
-							const SDL_UserEvent& uev = event.user;
-							switch (uev.type - s_userEventStart)
-							{
-							case SDL_USER_WINDOW_CREATE:
-								{
-									WindowHandle handle = getWindowHandle(uev);
-									Msg* msg = (Msg*)uev.data2;
-
-									m_window[handle.idx] = SDL_CreateWindow(msg->m_title.c_str()
-										, msg->m_x
-										, msg->m_y
-										, msg->m_width
-										, msg->m_height
-										, SDL_WINDOW_SHOWN
-										| SDL_WINDOW_RESIZABLE
-										);
-
-									m_flags[handle.idx] = msg->m_flags;
-
-									void* nwh = sdlNativeWindowHandle(m_window[handle.idx]);
-									if (NULL != nwh)
-									{
-										m_eventQueue.postSizeEvent(handle, msg->m_width, msg->m_height);
-										m_eventQueue.postWindowEvent(handle, nwh);
-									}
-
-									delete msg;
-								}
-								break;
-
-							case SDL_USER_WINDOW_DESTROY:
-								{
-									WindowHandle handle = getWindowHandle(uev);
-									if (isValid(handle) )
-									{
-										m_eventQueue.postWindowEvent(handle);
-										sdlDestroyWindow(m_window[handle.idx]);
-										m_window[handle.idx] = NULL;
-									}
-								}
-								break;
-
-							case SDL_USER_WINDOW_SET_TITLE:
-								{
-									WindowHandle handle = getWindowHandle(uev);
-									Msg* msg = (Msg*)uev.data2;
-									if (isValid(handle) )
-									{
-										SDL_SetWindowTitle(m_window[handle.idx], msg->m_title.c_str() );
-									}
-									delete msg;
-								}
-								break;
-
-							case SDL_USER_WINDOW_SET_FLAGS:
-								{
-									WindowHandle handle = getWindowHandle(uev);
-									Msg* msg = (Msg*)uev.data2;
-
-									if (msg->m_flagsEnabled)
-									{
-										m_flags[handle.idx] |= msg->m_flags;
-									}
-									else
-									{
-										m_flags[handle.idx] &= ~msg->m_flags;
-									}
-
-									delete msg;
-								}
-								break;
-
-							case SDL_USER_WINDOW_SET_POS:
-								{
-									WindowHandle handle = getWindowHandle(uev);
-									Msg* msg = (Msg*)uev.data2;
-									SDL_SetWindowPosition(m_window[handle.idx], msg->m_x, msg->m_y);
-									delete msg;
-								}
-								break;
-
-							case SDL_USER_WINDOW_SET_SIZE:
-								{
-									WindowHandle handle = getWindowHandle(uev);
-									Msg* msg = (Msg*)uev.data2;
-									if (isValid(handle) )
-									{
-										setWindowSize(handle, msg->m_width, msg->m_height);
-									}
-									delete msg;
-								}
-								break;
-
-							case SDL_USER_WINDOW_TOGGLE_FRAME:
-								{
-									WindowHandle handle = getWindowHandle(uev);
-									if (isValid(handle) )
-									{
-										m_flags[handle.idx] ^= ENTRY_WINDOW_FLAG_FRAME;
-										SDL_SetWindowBordered(m_window[handle.idx], (SDL_bool)!!(m_flags[handle.idx] & ENTRY_WINDOW_FLAG_FRAME) );
-									}
-								}
-								break;
-
-							case SDL_USER_WINDOW_TOGGLE_FULL_SCREEN:
-								{
-									WindowHandle handle = getWindowHandle(uev);
-									m_fullscreen = !m_fullscreen;
-									SDL_SetWindowFullscreen(m_window[handle.idx], m_fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
-								}
-								break;
-
-							case SDL_USER_WINDOW_MOUSE_LOCK:
-								{
-									SDL_SetRelativeMouseMode(!!uev.code ? SDL_TRUE : SDL_FALSE);
-								}
-								break;
-
-							default:
-								break;
-							}
-						}
-						break;
-					}
-				}
+				exit = handleSDLEvent();
 			}
 
 			while (bgfx::RenderFrame::NoContext != bgfx::renderFrame() ) {};
@@ -990,6 +1018,7 @@ namespace entry
 			SDL_Quit();
 
 			return m_thread.getExitCode();
+#endif
 		}
 
 		WindowHandle findHandle(uint32_t _windowId)
@@ -1044,10 +1073,11 @@ namespace entry
 			GamepadHandle invalid = { UINT16_MAX };
 			return invalid;
 		}
-
+#if BX_PLATFORM_EMSCRIPTEN
+#else
 		MainThreadEntry m_mte;
 		bx::Thread m_thread;
-
+#endif
 		EventQueue m_eventQueue;
 		bx::Mutex m_lock;
 
@@ -1070,6 +1100,14 @@ namespace entry
 	};
 
 	static Context s_ctx;
+
+#if BX_PLATFORM_EMSCRIPTEN
+	void updateApp()
+	{
+		s_ctx.handleSDLEvent();
+		getFirstApp()->update();
+	}
+#endif // BX_PLATFORM_EMSCRIPTEN
 
 	const Event* poll()
 	{
@@ -1161,9 +1199,8 @@ namespace entry
 	{
 		sdlPostEvent(SDL_USER_WINDOW_MOUSE_LOCK, _handle, NULL, _lock);
 	}
-#ifdef main
-#undef main
-#endif
+#if BX_PLATFORM_EMSCRIPTEN
+#else
 	int32_t MainThreadEntry::threadFunc(bx::Thread* _thread, void* _userData)
 	{
 		BX_UNUSED(_thread);
@@ -1177,10 +1214,10 @@ namespace entry
 		SDL_PushEvent(&event);
 		return result;
 	}
-
+#endif
 } // namespace entry
 
-int SDL_main(int _argc, char** _argv)
+int main(int _argc, char** _argv)
 {
 	using namespace entry;
 	return s_ctx.run(_argc, _argv);

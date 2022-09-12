@@ -18,7 +18,7 @@
 #endif // ENTRY_CONFIG_USE_NOOP
 
 #ifndef ENTRY_CONFIG_USE_SDL
-#	define ENTRY_CONFIG_USE_SDL 1
+#	define ENTRY_CONFIG_USE_SDL 0
 #endif // ENTRY_CONFIG_USE_SDL
 
 #ifndef ENTRY_CONFIG_USE_GLFW
@@ -90,6 +90,8 @@ namespace entry
 			Window,
 			Suspend,
 			DropFile,
+			Focus,
+			RawEvent
 		};
 
 		Event(Enum _type)
@@ -181,6 +183,19 @@ namespace entry
 		ENTRY_IMPLEMENT_EVENT(DropFileEvent, Event::DropFile);
 
 		bx::FilePath m_filePath;
+	};
+
+	struct FocusEvent : public Event
+    {
+        ENTRY_IMPLEMENT_EVENT(FocusEvent, Event::Focus);
+
+        bool m_has_focus;
+    };
+
+	struct RawEvent : public Event
+	{
+		ENTRY_IMPLEMENT_EVENT(RawEvent, Event::RawEvent);
+		void* data;
 	};
 
 	const Event* poll();
@@ -296,6 +311,20 @@ namespace entry
 			m_queue.push(ev);
 		}
 
+        void postFocusEvent(WindowHandle _handle, bool focus)
+        {
+            FocusEvent* ev = BX_NEW(getAllocator(), FocusEvent)(_handle);
+            ev->m_has_focus = focus;
+            m_queue.push(ev);
+        }
+
+		void postRawEvent(WindowHandle _handle, void* data)
+		{
+			RawEvent* ev = BX_NEW(getAllocator(), RawEvent)(_handle);
+			ev->data = data;
+			m_queue.push(ev);
+		}
+
 		const Event* poll()
 		{
 			return m_queue.pop();
@@ -318,6 +347,9 @@ namespace entry
 
 		void release(const Event* _event) const
 		{
+			if (_event->m_type == Event::RawEvent) {
+                BX_FREE(getAllocator(), ((RawEvent*)_event)->data);
+			}
 			BX_DELETE(getAllocator(), const_cast<Event*>(_event) );
 		}
 

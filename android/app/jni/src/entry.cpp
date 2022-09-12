@@ -15,8 +15,14 @@
 #endif // BX_PLATFORM_EMSCRIPTEN
 
 #include "entry_p.h"
-#include "cmd.h"
-#include "input.h"
+// #include "cmd.h"
+// #include "input.h"
+
+void OnMouseEvent(const void* me);
+void OnFocus(bool focus);
+void OnKey(const void* ke);
+void OnChar(uint8_t _len, const uint8_t _char[4]);
+void OnRawEvent(const void* ev);
 
 extern "C" int32_t _main_(int32_t _argc, char** _argv);
 
@@ -256,8 +262,8 @@ BX_PRAGMA_DIAGNOSTIC_POP();
 
 		return false;
 	}
-
-	int cmdMouseLock(CmdContext* /*_context*/, void* /*_userData*/, int _argc, char const* const* _argv)
+/*
+	int cmdMouseLock(CmdContext* _context, void* _userData, int _argc, char const* const* _argv)
 	{
 		if (1 < _argc)
 		{
@@ -278,7 +284,7 @@ BX_PRAGMA_DIAGNOSTIC_POP();
 		return bx::kExitFailure;
 	}
 
-	int cmdGraphics(CmdContext* /*_context*/, void* /*_userData*/, int _argc, char const* const* _argv)
+	int cmdGraphics(CmdContext* _context, void* _userData, int _argc, char const* const* _argv)
 	{
 		if (_argc > 1)
 		{
@@ -334,7 +340,7 @@ BX_PRAGMA_DIAGNOSTIC_POP();
 		return bx::kExitFailure;
 	}
 
-	int cmdExit(CmdContext* /*_context*/, void* /*_userData*/, int /*_argc*/, char const* const* /*_argv*/)
+	int cmdExit(CmdContext* _context, void* _userData, int _argc, char const* const* _argv)
 	{
 		s_exit = true;
 		return bx::kExitSuccess;
@@ -362,13 +368,14 @@ BX_PRAGMA_DIAGNOSTIC_POP();
 
 		INPUT_BINDING_END
 	};
-
+*/
 #if BX_PLATFORM_EMSCRIPTEN
 	static AppI* s_app;
 	static void updateApp()
 	{
 		s_app->update();
 	}
+	//void updateApp();
 #endif // BX_PLATFORM_EMSCRIPTEN
 
 	static AppI*    s_currentApp = NULL;
@@ -402,53 +409,68 @@ BX_PRAGMA_DIAGNOSTIC_POP();
 		return getFirstApp();
 	}
 
-	int cmdApp(CmdContext* /*_context*/, void* /*_userData*/, int _argc, char const* const* _argv)
+	// int cmdApp(CmdContext* /*_context*/, void* /*_userData*/, int _argc, char const* const* _argv)
+	// {
+	// 	if (0 == bx::strCmp(_argv[1], "restart") )
+	// 	{
+	// 		if (2 == _argc)
+	// 		{
+	// 			bx::strCopy(s_restartArgs, BX_COUNTOF(s_restartArgs), getCurrentApp()->getName() );
+	// 			return bx::kExitSuccess;
+	// 		}
+
+	// 		if (0 == bx::strCmp(_argv[2], "next") )
+	// 		{
+	// 			AppI* next = getNextWrap(getCurrentApp() );
+	// 			bx::strCopy(s_restartArgs, BX_COUNTOF(s_restartArgs), next->getName() );
+	// 			return bx::kExitSuccess;
+	// 		}
+	// 		else if (0 == bx::strCmp(_argv[2], "prev") )
+	// 		{
+	// 			AppI* prev = getCurrentApp();
+	// 			for (AppI* app = getNextWrap(prev); app != getCurrentApp(); app = getNextWrap(app) )
+	// 			{
+	// 				prev = app;
+	// 			}
+
+	// 			bx::strCopy(s_restartArgs, BX_COUNTOF(s_restartArgs), prev->getName() );
+	// 			return bx::kExitSuccess;
+	// 		}
+
+	// 		for (AppI* app = getFirstApp(); NULL != app; app = app->getNext() )
+	// 		{
+	// 			if (0 == bx::strCmp(_argv[2], app->getName() ) )
+	// 			{
+	// 				bx::strCopy(s_restartArgs, BX_COUNTOF(s_restartArgs), app->getName() );
+	// 				return bx::kExitSuccess;
+	// 			}
+	// 		}
+	// 	}
+
+	// 	return bx::kExitFailure;
+	// }
+
+	struct AppInternal
 	{
-		if (0 == bx::strCmp(_argv[1], "restart") )
-		{
-			if (2 == _argc)
-			{
-				bx::strCopy(s_restartArgs, BX_COUNTOF(s_restartArgs), getCurrentApp()->getName() );
-				return bx::kExitSuccess;
-			}
+		AppI* m_next;
+		const char* m_name;
+		const char* m_description;
+		const char* m_url;
+	};
 
-			if (0 == bx::strCmp(_argv[2], "next") )
-			{
-				AppI* next = getNextWrap(getCurrentApp() );
-				bx::strCopy(s_restartArgs, BX_COUNTOF(s_restartArgs), next->getName() );
-				return bx::kExitSuccess;
-			}
-			else if (0 == bx::strCmp(_argv[2], "prev") )
-			{
-				AppI* prev = getCurrentApp();
-				for (AppI* app = getNextWrap(prev); app != getCurrentApp(); app = getNextWrap(app) )
-				{
-					prev = app;
-				}
-
-				bx::strCopy(s_restartArgs, BX_COUNTOF(s_restartArgs), prev->getName() );
-				return bx::kExitSuccess;
-			}
-
-			for (AppI* app = getFirstApp(); NULL != app; app = app->getNext() )
-			{
-				if (0 == bx::strCmp(_argv[2], app->getName() ) )
-				{
-					bx::strCopy(s_restartArgs, BX_COUNTOF(s_restartArgs), app->getName() );
-					return bx::kExitSuccess;
-				}
-			}
-		}
-
-		return bx::kExitFailure;
-	}
+	static ptrdiff_t s_offset = 0;
 
 	AppI::AppI(const char* _name, const char* _description, const char* _url)
 	{
-		m_name        = _name;
-		m_description = _description;
-		m_url         = _url;
-		m_next        = s_apps;
+		BX_STATIC_ASSERT(sizeof(AppInternal) <= sizeof(m_internal) );
+		s_offset = BX_OFFSETOF(AppI, m_internal);
+
+		AppInternal* ai = (AppInternal*)m_internal;
+
+		ai->m_name        = _name;
+		ai->m_description = _description;
+		ai->m_url         = _url;
+		ai->m_next        = s_apps;
 
 		s_apps = this;
 		s_numApps++;
@@ -464,7 +486,8 @@ BX_PRAGMA_DIAGNOSTIC_POP();
 			{
 				if (NULL != prev)
 				{
-					prev->m_next = next;
+					AppInternal* ai = bx::addressOf<AppInternal>(prev, s_offset);
+					ai->m_next = next;
 				}
 				else
 				{
@@ -480,22 +503,26 @@ BX_PRAGMA_DIAGNOSTIC_POP();
 
 	const char* AppI::getName() const
 	{
-		return m_name;
+		AppInternal* ai = (AppInternal*)m_internal;
+		return ai->m_name;
 	}
 
 	const char* AppI::getDescription() const
 	{
-		return m_description;
+		AppInternal* ai = (AppInternal*)m_internal;
+		return ai->m_description;
 	}
 
 	const char* AppI::getUrl() const
 	{
-		return m_url;
+		AppInternal* ai = (AppInternal*)m_internal;
+		return ai->m_url;
 	}
 
 	AppI* AppI::getNext()
 	{
-		return m_next;
+		AppInternal* ai = (AppInternal*)m_internal;
+		return ai->m_next;
 	}
 
 	AppI* getFirstApp()
@@ -513,8 +540,7 @@ BX_PRAGMA_DIAGNOSTIC_POP();
 		_app->init(_argc, _argv, s_width, s_height);
 		bgfx::frame();
 
-		WindowHandle defaultWindow = { 0 };
-		setWindowSize(defaultWindow, s_width, s_height);
+		setWindowSize(kDefaultWindowHandle, s_width, s_height);
 
 #if BX_PLATFORM_EMSCRIPTEN
 		s_app = _app;
@@ -560,9 +586,15 @@ BX_PRAGMA_DIAGNOSTIC_POP();
 		for (ii = 1; ii < s_numApps; ++ii)
 		{
 			AppI* app = apps[ii-1];
-			app->m_next = apps[ii];
+
+			AppInternal* ai = bx::addressOf<AppInternal>(app, s_offset);
+			ai->m_next = apps[ii];
 		}
-		apps[s_numApps-1]->m_next = NULL;
+
+		{
+			AppInternal* ai = bx::addressOf<AppInternal>(apps[s_numApps-1], s_offset);
+			ai->m_next = NULL;
+		}
 
 		BX_FREE(g_allocator, apps);
 	}
@@ -574,23 +606,21 @@ BX_PRAGMA_DIAGNOSTIC_POP();
 		s_fileReader = BX_NEW(g_allocator, FileReader);
 		s_fileWriter = BX_NEW(g_allocator, FileWriter);
 
-		cmdInit();
-		cmdAdd("mouselock", cmdMouseLock);
-		cmdAdd("graphics",  cmdGraphics );
-		cmdAdd("exit",      cmdExit     );
-		cmdAdd("app",       cmdApp      );
+		// cmdInit();
+		// cmdAdd("mouselock", cmdMouseLock);
+		// cmdAdd("graphics",  cmdGraphics );
+		// cmdAdd("exit",      cmdExit     );
+		// cmdAdd("app",       cmdApp      );
 
-		inputInit();
-		inputAddBindings("bindings", s_bindings);
-
-		entry::WindowHandle defaultWindow = { 0 };
+		// inputInit();
+		// inputAddBindings("bindings", s_bindings);
 
 		bx::FilePath fp(_argv[0]);
 		char title[bx::kMaxFilePath];
 		bx::strCopy(title, BX_COUNTOF(title), fp.getBaseName() );
 
-		entry::setWindowTitle(defaultWindow, title);
-		setWindowSize(defaultWindow, ENTRY_DEFAULT_WIDTH, ENTRY_DEFAULT_HEIGHT);
+		entry::setWindowTitle(kDefaultWindowHandle, title);
+		setWindowSize(kDefaultWindowHandle, ENTRY_DEFAULT_WIDTH, ENTRY_DEFAULT_HEIGHT);
 
 		sortApps();
 
@@ -638,10 +668,10 @@ restart:
 
 		setCurrentDir("");
 
-		inputRemoveBindings("bindings");
-		inputShutdown();
+		// inputRemoveBindings("bindings");
+		// inputShutdown();
 
-		cmdShutdown();
+		// cmdShutdown();
 
 		BX_DELETE(g_allocator, s_fileReader);
 		s_fileReader = NULL;
@@ -663,7 +693,7 @@ restart:
 
 		WindowHandle handle = { UINT16_MAX };
 
-		bool mouseLock = inputIsMouseLocked();
+		//bool mouseLock = inputIsMouseLocked();
 
 		const Event* ev;
 		do
@@ -675,17 +705,22 @@ restart:
 			{
 				switch (ev->m_type)
 				{
-				case Event::Axis:
-					{
-						const AxisEvent* axis = static_cast<const AxisEvent*>(ev);
-						inputSetGamepadAxis(axis->m_gamepad, axis->m_axis, axis->m_value);
-					}
+				case Event::RawEvent:
+					OnRawEvent(ev);
 					break;
+
+				// case Event::Axis:
+				// 	{
+				// 		const AxisEvent* axis = static_cast<const AxisEvent*>(ev);
+				// 		inputSetGamepadAxis(axis->m_gamepad, axis->m_axis, axis->m_value);
+				// 	}
+				// 	break;
 
 				case Event::Char:
 					{
 						const CharEvent* chev = static_cast<const CharEvent*>(ev);
-						inputChar(chev->m_len, chev->m_char);
+						//inputChar(chev->m_len, chev->m_char);
+						OnChar(chev->m_len, chev->m_char);
 					}
 					break;
 
@@ -704,23 +739,24 @@ restart:
 						const MouseEvent* mouse = static_cast<const MouseEvent*>(ev);
 						handle = mouse->m_handle;
 
-						inputSetMousePos(mouse->m_mx, mouse->m_my, mouse->m_mz);
-						if (!mouse->m_move)
-						{
-							inputSetMouseButtonState(mouse->m_button, mouse->m_down);
-						}
+						// inputSetMousePos(mouse->m_mx, mouse->m_my, mouse->m_mz);
+						// if (!mouse->m_move)
+						// {
+						// 	inputSetMouseButtonState(mouse->m_button, mouse->m_down);
+						// }
 
-						if (NULL != _mouse
-						&&  !mouseLock)
-						{
-							_mouse->m_mx = mouse->m_mx;
-							_mouse->m_my = mouse->m_my;
-							_mouse->m_mz = mouse->m_mz;
-							if (!mouse->m_move)
-							{
-								_mouse->m_buttons[mouse->m_button] = mouse->m_down;
-							}
-						}
+						// if (NULL != _mouse
+						// &&  !mouseLock)
+						// {
+						// 	_mouse->m_mx = mouse->m_mx;
+						// 	_mouse->m_my = mouse->m_my;
+						// 	_mouse->m_mz = mouse->m_mz;
+						// 	if (!mouse->m_move)
+						// 	{
+						// 		_mouse->m_buttons[mouse->m_button] = mouse->m_down;
+						// 	}
+						// }
+						OnMouseEvent(mouse);
 					}
 					break;
 
@@ -729,10 +765,10 @@ restart:
 						const KeyEvent* key = static_cast<const KeyEvent*>(ev);
 						handle = key->m_handle;
 
-						inputSetKeyState(key->m_key, key->m_modifiers, key->m_down);
+						//inputSetKeyState(key->m_key, key->m_modifiers, key->m_down);
+						OnKey(key);
 					}
 					break;
-
 				case Event::Size:
 					{
 						const SizeEvent* size = static_cast<const SizeEvent*>(ev);
@@ -749,25 +785,32 @@ restart:
 					}
 					break;
 
-				case Event::Window:
-					break;
+				// case Event::Window:
+				// 	break;
 
-				case Event::Suspend:
-					break;
+				// case Event::Suspend:
+				// 	break;
 
-				case Event::DropFile:
-					{
-						const DropFileEvent* drop = static_cast<const DropFileEvent*>(ev);
-						DBG("%s", drop->m_filePath.getCPtr() );
+				// case Event::DropFile:
+				// 	{
+				// 		const DropFileEvent* drop = static_cast<const DropFileEvent*>(ev);
+				// 		DBG("%s", drop->m_filePath.getCPtr() );
+				// 	}
+				// 	break;
+
+                case Event::Focus:
+                    {
+						const FocusEvent* fe = static_cast<const FocusEvent*>(ev);
+                        OnFocus(fe->m_has_focus);
 					}
-					break;
+                    break;
 
 				default:
 					break;
 				}
 			}
 
-			inputProcess();
+//			inputProcess();
 
 		} while (NULL != ev);
 
@@ -778,7 +821,7 @@ restart:
 		{
 			_reset = s_reset;
 			bgfx::reset(_width, _height, _reset);
-			inputSetMouseResolution(uint16_t(_width), uint16_t(_height) );
+//			inputSetMouseResolution(uint16_t(_width), uint16_t(_height) );
 		}
 
 		_debug = s_debug;
@@ -789,181 +832,181 @@ restart:
 		return s_exit;
 	}
 
-	bool processWindowEvents(WindowState& _state, uint32_t& _debug, uint32_t& _reset)
-	{
-		bool needReset = s_reset != _reset;
+	// bool processWindowEvents(WindowState& _state, uint32_t& _debug, uint32_t& _reset)
+	// {
+	// 	bool needReset = s_reset != _reset;
 
-		s_debug = _debug;
-		s_reset = _reset;
+	// 	s_debug = _debug;
+	// 	s_reset = _reset;
 
-		WindowHandle handle = { UINT16_MAX };
+	// 	WindowHandle handle = { UINT16_MAX };
 
-		bool mouseLock = inputIsMouseLocked();
-		bool clearDropFile = true;
+	// 	bool mouseLock = inputIsMouseLocked();
+	// 	bool clearDropFile = true;
 
-		const Event* ev;
-		do
-		{
-			struct SE
-			{
-				SE(WindowHandle _handle)
-					: m_ev(poll(_handle) )
-				{
-				}
+	// 	const Event* ev;
+	// 	do
+	// 	{
+	// 		struct SE
+	// 		{
+	// 			SE(WindowHandle _handle)
+	// 				: m_ev(poll(_handle) )
+	// 			{
+	// 			}
 
-				~SE()
-				{
-					if (NULL != m_ev)
-					{
-						release(m_ev);
-					}
-				}
+	// 			~SE()
+	// 			{
+	// 				if (NULL != m_ev)
+	// 				{
+	// 					release(m_ev);
+	// 				}
+	// 			}
 
-				const Event* m_ev;
+	// 			const Event* m_ev;
 
-			} scopeEvent(handle);
-			ev = scopeEvent.m_ev;
+	// 		} scopeEvent(handle);
+	// 		ev = scopeEvent.m_ev;
 
-			if (NULL != ev)
-			{
-				handle = ev->m_handle;
-				WindowState& win = s_window[handle.idx];
+	// 		if (NULL != ev)
+	// 		{
+	// 			handle = ev->m_handle;
+	// 			WindowState& win = s_window[handle.idx];
 
-				switch (ev->m_type)
-				{
-				case Event::Axis:
-					{
-						const AxisEvent* axis = static_cast<const AxisEvent*>(ev);
-						inputSetGamepadAxis(axis->m_gamepad, axis->m_axis, axis->m_value);
-					}
-					break;
+	// 			switch (ev->m_type)
+	// 			{
+	// 			case Event::Axis:
+	// 				{
+	// 					const AxisEvent* axis = static_cast<const AxisEvent*>(ev);
+	// 					inputSetGamepadAxis(axis->m_gamepad, axis->m_axis, axis->m_value);
+	// 				}
+	// 				break;
 
-				case Event::Char:
-					{
-						const CharEvent* chev = static_cast<const CharEvent*>(ev);
-						win.m_handle = chev->m_handle;
-						inputChar(chev->m_len, chev->m_char);
-					}
-					break;
+	// 			case Event::Char:
+	// 				{
+	// 					const CharEvent* chev = static_cast<const CharEvent*>(ev);
+	// 					win.m_handle = chev->m_handle;
+	// 					inputChar(chev->m_len, chev->m_char);
+	// 				}
+	// 				break;
 
-				case Event::Exit:
-					return true;
+	// 			case Event::Exit:
+	// 				return true;
 
-				case Event::Gamepad:
-					{
-						const GamepadEvent* gev = static_cast<const GamepadEvent*>(ev);
-						DBG("gamepad %d, %d", gev->m_gamepad.idx, gev->m_connected);
-					}
-					break;
+	// 			case Event::Gamepad:
+	// 				{
+	// 					const GamepadEvent* gev = static_cast<const GamepadEvent*>(ev);
+	// 					DBG("gamepad %d, %d", gev->m_gamepad.idx, gev->m_connected);
+	// 				}
+	// 				break;
 
-				case Event::Mouse:
-					{
-						const MouseEvent* mouse = static_cast<const MouseEvent*>(ev);
-						win.m_handle = mouse->m_handle;
+	// 			case Event::Mouse:
+	// 				{
+	// 					const MouseEvent* mouse = static_cast<const MouseEvent*>(ev);
+	// 					win.m_handle = mouse->m_handle;
 
-						if (mouse->m_move)
-						{
-							inputSetMousePos(mouse->m_mx, mouse->m_my, mouse->m_mz);
-						}
-						else
-						{
-							inputSetMouseButtonState(mouse->m_button, mouse->m_down);
-						}
+	// 					if (mouse->m_move)
+	// 					{
+	// 						inputSetMousePos(mouse->m_mx, mouse->m_my, mouse->m_mz);
+	// 					}
+	// 					else
+	// 					{
+	// 						inputSetMouseButtonState(mouse->m_button, mouse->m_down);
+	// 					}
 
-						if (!mouseLock)
-						{
-							if (mouse->m_move)
-							{
-								win.m_mouse.m_mx = mouse->m_mx;
-								win.m_mouse.m_my = mouse->m_my;
-								win.m_mouse.m_mz = mouse->m_mz;
-							}
-							else
-							{
-								win.m_mouse.m_buttons[mouse->m_button] = mouse->m_down;
-							}
-						}
-					}
-					break;
+	// 					if (!mouseLock)
+	// 					{
+	// 						if (mouse->m_move)
+	// 						{
+	// 							win.m_mouse.m_mx = mouse->m_mx;
+	// 							win.m_mouse.m_my = mouse->m_my;
+	// 							win.m_mouse.m_mz = mouse->m_mz;
+	// 						}
+	// 						else
+	// 						{
+	// 							win.m_mouse.m_buttons[mouse->m_button] = mouse->m_down;
+	// 						}
+	// 					}
+	// 				}
+	// 				break;
 
-				case Event::Key:
-					{
-						const KeyEvent* key = static_cast<const KeyEvent*>(ev);
-						win.m_handle = key->m_handle;
+	// 			case Event::Key:
+	// 				{
+	// 					const KeyEvent* key = static_cast<const KeyEvent*>(ev);
+	// 					win.m_handle = key->m_handle;
 
-						inputSetKeyState(key->m_key, key->m_modifiers, key->m_down);
-					}
-					break;
+	// 					inputSetKeyState(key->m_key, key->m_modifiers, key->m_down);
+	// 				}
+	// 				break;
 
-				case Event::Size:
-					{
-						const SizeEvent* size = static_cast<const SizeEvent*>(ev);
-						win.m_handle = size->m_handle;
-						win.m_width  = size->m_width;
-						win.m_height = size->m_height;
+	// 			case Event::Size:
+	// 				{
+	// 					const SizeEvent* size = static_cast<const SizeEvent*>(ev);
+	// 					win.m_handle = size->m_handle;
+	// 					win.m_width  = size->m_width;
+	// 					win.m_height = size->m_height;
 
-						needReset = win.m_handle.idx == 0 ? true : needReset;
-					}
-					break;
+	// 					needReset = win.m_handle.idx == 0 ? true : needReset;
+	// 				}
+	// 				break;
 
-				case Event::Window:
-					{
-						const WindowEvent* window = static_cast<const WindowEvent*>(ev);
-						win.m_handle = window->m_handle;
-						win.m_nwh    = window->m_nwh;
-						ev = NULL;
-					}
-					break;
+	// 			case Event::Window:
+	// 				{
+	// 					const WindowEvent* window = static_cast<const WindowEvent*>(ev);
+	// 					win.m_handle = window->m_handle;
+	// 					win.m_nwh    = window->m_nwh;
+	// 					ev = NULL;
+	// 				}
+	// 				break;
 
-				case Event::Suspend:
-					break;
+	// 			case Event::Suspend:
+	// 				break;
 
-				case Event::DropFile:
-					{
-						const DropFileEvent* drop = static_cast<const DropFileEvent*>(ev);
-						win.m_dropFile = drop->m_filePath;
-						clearDropFile = false;
-					}
-					break;
+	// 			case Event::DropFile:
+	// 				{
+	// 					const DropFileEvent* drop = static_cast<const DropFileEvent*>(ev);
+	// 					win.m_dropFile = drop->m_filePath;
+	// 					clearDropFile = false;
+	// 				}
+	// 				break;
 
-				default:
-					break;
-				}
-			}
+	// 			default:
+	// 				break;
+	// 			}
+	// 		}
 
-			inputProcess();
+	// 		inputProcess();
 
-		} while (NULL != ev);
+	// 	} while (NULL != ev);
 
-		if (isValid(handle) )
-		{
-			WindowState& win = s_window[handle.idx];
-			if (clearDropFile)
-			{
-				win.m_dropFile.clear();
-			}
+	// 	if (isValid(handle) )
+	// 	{
+	// 		WindowState& win = s_window[handle.idx];
+	// 		if (clearDropFile)
+	// 		{
+	// 			win.m_dropFile.clear();
+	// 		}
 
-			_state = win;
+	// 		_state = win;
 
-			if (handle.idx == 0)
-			{
-				inputSetMouseResolution(uint16_t(win.m_width), uint16_t(win.m_height) );
-			}
-		}
+	// 		if (handle.idx == 0)
+	// 		{
+	// 			inputSetMouseResolution(uint16_t(win.m_width), uint16_t(win.m_height) );
+	// 		}
+	// 	}
 
-		needReset |= _reset != s_reset;
+	// 	needReset |= _reset != s_reset;
 
-		if (needReset)
-		{
-			_reset = s_reset;
-			bgfx::reset(s_window[0].m_width, s_window[0].m_height, _reset);
-			inputSetMouseResolution(uint16_t(s_window[0].m_width), uint16_t(s_window[0].m_height) );
-		}
+	// 	if (needReset)
+	// 	{
+	// 		_reset = s_reset;
+	// 		bgfx::reset(s_window[0].m_width, s_window[0].m_height, _reset);
+	// 		inputSetMouseResolution(uint16_t(s_window[0].m_width), uint16_t(s_window[0].m_height) );
+	// 	}
 
-		_debug = s_debug;
+	// 	_debug = s_debug;
 
-		return s_exit;
-	}
+	// 	return s_exit;
+	// }
 
 	bx::FileReaderI* getFileReader()
 	{
@@ -1003,4 +1046,14 @@ restart:
 extern "C" bool entry_process_events(uint32_t* _width, uint32_t* _height, uint32_t* _debug, uint32_t* _reset)
 {
 	return entry::processEvents(*_width, *_height, *_debug, *_reset, NULL);
+}
+
+extern "C" void* entry_get_default_native_window_handle()
+{
+	return entry::getNativeWindowHandle(entry::kDefaultWindowHandle);
+}
+
+extern "C" void* entry_get_native_display_handle()
+{
+	return entry::getNativeDisplayHandle();
 }

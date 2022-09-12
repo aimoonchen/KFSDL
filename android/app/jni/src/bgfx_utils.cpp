@@ -17,7 +17,7 @@ namespace stl = tinystl;
 #include <bx/readerwriter.h>
 #include <bx/string.h>
 #include "entry.h"
-// #include <meshoptimizer/src/meshoptimizer.h>
+//#include <meshoptimizer/src/meshoptimizer.h>
 
 #include "bgfx_utils.h"
 
@@ -444,7 +444,7 @@ void Mesh::load(bx::ReaderSeekerI* _reader, bool _ramcopy)
 				void* compressedVertices = BX_ALLOC(allocator, compressedSize);
 				bx::read(_reader, compressedVertices, compressedSize, &err);
 
-				// meshopt_decodeVertexBuffer(mem->data, group.m_numVertices, stride, (uint8_t*)compressedVertices, compressedSize);
+				//meshopt_decodeVertexBuffer(mem->data, group.m_numVertices, stride, (uint8_t*)compressedVertices, compressedSize);
 
 				BX_FREE(allocator, compressedVertices);
 
@@ -488,7 +488,7 @@ void Mesh::load(bx::ReaderSeekerI* _reader, bool _ramcopy)
 
 				bx::read(_reader, compressedIndices, compressedSize, &err);
 
-				// meshopt_decodeIndexBuffer(mem->data, group.m_numIndices, 2, (uint8_t*)compressedIndices, compressedSize);
+				//meshopt_decodeIndexBuffer(mem->data, group.m_numIndices, 2, (uint8_t*)compressedIndices, compressedSize);
 
 				BX_FREE(allocator, compressedIndices);
 
